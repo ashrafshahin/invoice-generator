@@ -632,6 +632,16 @@ td input.input-invalid {
   text-align: center;
 }
 
+/* Schedule table has 4 columns: # / Description / Service Date / Amount —
+   the generic nth-child rules (written for line items) must be overridden */
+.preview-schedule-table td:nth-child(2) {
+  text-align: left;
+}
+
+.preview-schedule-table td:nth-child(3) {
+  text-align: center;
+}
+
 .preview-totals-wrap {
   display: flex;
   justify-content: flex-end;
@@ -1037,12 +1047,16 @@ td select:focus {
   width: 44px;
 }
 
+.col-installment-desc {
+  width: 35%;
+}
+
 .col-installment-date {
-  width: 45%;
+  width: 28%;
 }
 
 .col-installment-amount {
-  width: 35%;
+  width: 20%;
 }
 
 .installment-no {

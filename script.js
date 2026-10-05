@@ -434,11 +434,14 @@ function addCharge(label = 'Custom Charge', mode = 'add', basis = 'percent', val
   updateTotals();
 }
 
-// Add an installment row with a service date
-function addInstallment(date = '', amount = 0) {
+// Add an installment row with a short description and service date
+function addInstallment(date = '', amount = 0, description = '') {
   const tr = document.createElement('tr');
   tr.innerHTML = `
     <td class="installment-no"></td>
+    <td>
+      <input type="text" class="installment-desc" placeholder="e.g. Milestone 1" />
+    </td>
     <td>
       <input type="date" class="installment-date" value="${date}" />
     </td>
@@ -449,6 +452,7 @@ function addInstallment(date = '', amount = 0) {
       <button class="delete-btn" title="Remove installment">&times;</button>
     </td>
   `;
+  tr.querySelector('.installment-desc').value = description;
   tr.querySelector('.delete-btn').addEventListener('click', () => {
     tr.remove();
     updateTotals();
@@ -536,10 +540,11 @@ function computeTotals() {
   let scheduled = 0;
 
   document.querySelectorAll('#installmentsBody tr').forEach((tr) => {
+    const description = tr.querySelector('.installment-desc').value.trim();
     const date = tr.querySelector('.installment-date').value;
     const amount = Math.max(0, parseFloat(tr.querySelector('.installment-amount').value) || 0);
     scheduled += amount;
-    installments.push({ date, amount });
+    installments.push({ description, date, amount });
   });
 
   scheduled = Math.round(scheduled * 100) / 100;
@@ -633,6 +638,7 @@ function getInvoiceData() {
     installments: t.installments,
     scheduled: t.scheduled,
     remaining: t.remaining,
+    currency: currentCurrency,
     year: new Date().getFullYear(),
   };
 }
@@ -643,255 +649,363 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// PDF design tokens — print-safe palette (dark text on light ground, hairline rules)
+const PDF_THEME = {
+  ink: [17, 24, 39], // #111827 headings & values
+  body: [31, 41, 55], // #1F2937 table text
+  muted: [107, 114, 128], // #6B7280 labels
+  line: [209, 213, 219], // #D1D5DB hairlines & borders
+  soft: [249, 250, 251], // #F9FAFB zebra rows & boxes
+  accent: [79, 70, 229], // #4F46E5 brand indigo
+  danger: [185, 28, 28], // #B91C1C deductions
+  success: [21, 128, 61], // #15803D fully scheduled
+  white: [255, 255, 255],
+};
+
 // Generate PDF using jsPDF directly
 function generatePDF(data, logoDataUrl) {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  // --- Embedded fonts: Inter matches the web UI; falls back to Helvetica ---
+  let family = 'helvetica';
+  let takaFamily = null;
+  if (window.PDF_FONTS) {
+    try {
+      pdf.addFileToVFS('Inter-Regular.ttf', PDF_FONTS.interRegular);
+      pdf.addFont('Inter-Regular.ttf', 'Inter', 'normal');
+      pdf.addFileToVFS('Inter-Bold.ttf', PDF_FONTS.interBold);
+      pdf.addFont('Inter-Bold.ttf', 'Inter', 'bold');
+      family = 'Inter';
+    } catch (e) {
+      family = 'helvetica';
+    }
+    try {
+      pdf.addFileToVFS('Taka-Regular.ttf', PDF_FONTS.takaRegular);
+      pdf.addFont('Taka-Regular.ttf', 'Taka', 'normal');
+      pdf.addFileToVFS('Taka-Bold.ttf', PDF_FONTS.takaBold);
+      pdf.addFont('Taka-Bold.ttf', 'Taka', 'bold');
+      takaFamily = 'Taka';
+    } catch (e) {
+      takaFamily = null;
+    }
+  }
+
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 18;
   const contentWidth = pageWidth - margin * 2;
+  const footerTop = pageHeight - 20;
+  const T = PDF_THEME;
+  const fill = (c) => pdf.setFillColor(c[0], c[1], c[2]);
+  const ink = (c) => pdf.setTextColor(c[0], c[1], c[2]);
+  const stroke = (c) => pdf.setDrawColor(c[0], c[1], c[2]);
+
   const currencySymbol = CURRENCY_SYMBOLS[currentCurrency] || '$';
   const fmt = (n) => `${currencySymbol}${formatNumber(n)}`;
 
-  let y = margin;
+  // Pick the face for a string: the Bengali Taka sign exists only in the Taka face
+  const useFont = (weight, text) => {
+    const isTaka = takaFamily && typeof text === 'string' && text.indexOf('৳') !== -1;
+    pdf.setFont(isTaka ? takaFamily : family, weight);
+  };
 
-  // ===== HEADER (Logo LEFT + INVOICE + Dates) =====
+  // Draw one string in a single call (face chosen from the text itself)
+  const put = (str, x, y, opts, style) => {
+    useFont((style && style.weight) || 'normal', str);
+    if (style && style.size) pdf.setFontSize(style.size);
+    if (style && style.color) ink(style.color);
+    pdf.text(str, x, y, opts || {});
+  };
+
+  // Truncate with an ellipsis so text never leaves its column
+  const fit = (text, maxWidth, weight) => {
+    const w = weight || 'normal';
+    useFont(w, text);
+    if (pdf.getTextWidth(text) <= maxWidth) return text;
+    let s = String(text);
+    while (s.length > 1) {
+      useFont(w, s + '...');
+      if (pdf.getTextWidth(`${s}...`) <= maxWidth) break;
+      s = s.slice(0, -1);
+    }
+    return `${s}...`;
+  };
+
+  // Clean white ground on every page — consistent on screen and in print
+  const paintPage = () => {
+    fill(T.white);
+    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+  };
+  paintPage();
+
+  // ===== HEADER =====
+  fill(T.accent);
+  pdf.rect(margin, 12, contentWidth, 2.4, 'F'); // brand bar, kept inside print margins
+
   let logoWidth = 0;
   if (logoDataUrl) {
     try {
-      const logoHeight = 16;
+      pdf.addImage(logoDataUrl, 'PNG', margin, 18, 40, 15);
       logoWidth = 40;
-      pdf.addImage(logoDataUrl, 'PNG', margin, y - 4, logoWidth, logoHeight);
     } catch (e) {
       logoWidth = 0;
     }
   }
 
   const titleX = margin + (logoWidth > 0 ? logoWidth + 8 : 0);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(24);
-  pdf.setTextColor(79, 70, 229);
-  pdf.text('INVOICE', titleX, y + 2);
+  put('INVOICE', titleX, 31, undefined, { weight: 'bold', size: 27, color: T.accent });
+  put(`# ${data.invoiceNumber}`, titleX, 38.5, undefined, { size: 9.5, color: T.muted });
 
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(10);
-  pdf.setTextColor(107, 114, 128);
-  pdf.text(`# ${data.invoiceNumber}`, titleX, y + 9);
+  // Meta block, right aligned: labels left, values right
+  const metaLabelX = pageWidth - margin - 66;
+  let metaY = 24;
+  [
+    ['INVOICE DATE', formatDate(data.invoiceDate)],
+    ['DUE DATE', formatDate(data.dueDate)],
+    ['CURRENCY', `${currencySymbol} ${data.currency || currentCurrency}`],
+  ].forEach(([label, value]) => {
+    put(label, metaLabelX, metaY, undefined, { weight: 'bold', size: 7.5, color: T.muted });
+    put(fit(value, 46, 'normal'), pageWidth - margin, metaY, { align: 'right' }, { size: 9.5, color: T.ink });
+    metaY += 6;
+  });
 
-  // Dates aligned right
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(55, 65, 81);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text('Invoice Date:', pageWidth - margin - 80, y - 1);
-  pdf.setFont('helvetica', 'normal');
-  pdf.text(formatDate(data.invoiceDate), pageWidth - margin, y - 1, { align: 'right' });
-  pdf.setFont('helvetica', 'bold');
-  pdf.text('Due Date:', pageWidth - margin - 80, y + 5);
-  pdf.setFont('helvetica', 'normal');
-  pdf.text(formatDate(data.dueDate), pageWidth - margin, y + 5, { align: 'right' });
+  // Header double rule: brand accent over a hairline
+  stroke(T.accent);
+  pdf.setLineWidth(0.9);
+  pdf.line(margin, 45, pageWidth - margin, 45);
+  stroke(T.line);
+  pdf.setLineWidth(0.25);
+  pdf.line(margin, 46.8, pageWidth - margin, 46.8);
+  // ===== BILL FROM / BILL TO — soft bordered boxes =====
+  const partyTop = 53;
+  const boxW = (contentWidth - 8) / 2;
+  const innerW = boxW - 8;
+  const fromX = margin;
+  const toX = margin + boxW + 8;
 
-  // Header underline
-  y += 18;
-  pdf.setDrawColor(79, 70, 229);
-  pdf.setLineWidth(1.5);
-  pdf.line(margin, y, pageWidth - margin, y);
-  y += 12;
+  // Measure first so the boxes can be drawn behind the text
+  const partyHeight = (name, details) => {
+    let h = 13.5; // heading baseline offset + gap
+    if (name) h += 5.5;
+    useFont('normal');
+    pdf.setFontSize(9);
+    details.forEach((d) => {
+      if (d) h += pdf.splitTextToSize(d, innerW).length * 4.7;
+    });
+    return h + 3.5;
+  };
 
-  // ===== BILL FROM / BILL TO =====
-  const sectionTopY = y;
-  const rightColX = margin + contentWidth * 0.52;
+  const hFrom = partyHeight(data.companyName, [data.companyEmail, data.companyPhone, data.companyAddress]);
+  const hTo = partyHeight(data.clientName, [data.clientEmail, data.clientPhone, data.clientAddress]);
+  const boxH = Math.max(hFrom, hTo);
 
-  // Bill From
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9);
-  pdf.setTextColor(79, 70, 229);
-  pdf.text('BILL FROM', margin, y);
+  fill(T.soft);
+  stroke(T.line);
+  pdf.setLineWidth(0.3);
+  pdf.roundedRect(fromX, partyTop, boxW, boxH, 2, 2, 'FD');
+  pdf.roundedRect(toX, partyTop, boxW, boxH, 2, 2, 'FD');
 
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(10);
-  pdf.setTextColor(17, 24, 39);
-  let fromY = y + 5;
-  if (data.companyName) { pdf.setFont('helvetica', 'bold'); pdf.text(data.companyName, margin, fromY); fromY += 5; pdf.setFont('helvetica', 'normal'); }
-  if (data.companyEmail) { pdf.text(data.companyEmail, margin, fromY); fromY += 5; }
-  if (data.companyPhone) { pdf.text(data.companyPhone, margin, fromY); fromY += 5; }
-  if (data.companyAddress) {
-    const addrLines = pdf.splitTextToSize(data.companyAddress, contentWidth * 0.48);
-    addrLines.forEach((line) => { pdf.text(line, margin, fromY); fromY += 5; });
-  }
+  const drawParty = (x, heading, name, details) => {
+    let baseY = partyTop + 7;
+    put(heading, x + 4, baseY, { charSpace: 0.2 }, { weight: 'bold', size: 7.5, color: T.accent });
+    baseY += 6.5;
+    if (name) {
+      put(fit(name, innerW, 'bold'), x + 4, baseY, undefined, { weight: 'bold', size: 11, color: T.ink });
+      baseY += 5.5;
+    }
+    details.forEach((d) => {
+      if (!d) return;
+      pdf.splitTextToSize(d, innerW).forEach((ln) => {
+        put(fit(ln, innerW, 'normal'), x + 4, baseY, undefined, { size: 9, color: T.body });
+        baseY += 4.7;
+      });
+    });
+  };
 
-  // Bill To
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9);
-  pdf.setTextColor(79, 70, 229);
-  pdf.text('BILL TO', rightColX, sectionTopY);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(10);
-  pdf.setTextColor(17, 24, 39);
-  let toY = sectionTopY + 5;
-  if (data.clientName) { pdf.setFont('helvetica', 'bold'); pdf.text(data.clientName, rightColX, toY); toY += 5; pdf.setFont('helvetica', 'normal'); }
-  if (data.clientEmail) { pdf.text(data.clientEmail, rightColX, toY); toY += 5; }
-  if (data.clientPhone) { pdf.text(data.clientPhone, rightColX, toY); toY += 5; }
-  if (data.clientAddress) {
-    const addrLines = pdf.splitTextToSize(data.clientAddress, contentWidth * 0.48);
-    addrLines.forEach((line) => { pdf.text(line, rightColX, toY); toY += 5; });
-  }
+  drawParty(fromX, 'BILL FROM', data.companyName,
+    [data.companyEmail, data.companyPhone, data.companyAddress]);
+  drawParty(toX, 'BILL TO', data.clientName,
+    [data.clientEmail, data.clientPhone, data.clientAddress]);
+  // ===== LINE ITEMS TABLE =====
+  const itemsTop = partyTop + boxH + 9;
+  const headerH = 8;
+  const rowH = 8;
+  const amountR = pageWidth - margin - 4;
+  const priceR = amountR - 40;
+  const qtyR = priceR - 24;
+  const descX = margin + 4;
+  const descW = qtyR - 8 - descX;
 
-  // ===== ITEMS TABLE =====
-  const tableY = Math.max(fromY, toY) + 8;
+  const itemHeaders = [
+    ['DESCRIPTION', descX, 'left'],
+    ['QTY', qtyR, 'right'],
+    ['PRICE', priceR, 'right'],
+    ['AMOUNT', amountR, 'right'],
+  ];
 
-  // Table header
-  pdf.setFillColor(79, 70, 229);
-  pdf.rect(margin, tableY - 6, contentWidth, 9, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(255, 255, 255);
+  const drawTableHeader = (top, labels) => {
+    fill(T.accent);
+    pdf.rect(margin, top, contentWidth, headerH, 'F');
+    labels.forEach(([text, x, align]) =>
+      put(text, x, top + 5.3, { align }, { weight: 'bold', size: 8, color: T.white }));
+  };
 
-  const colDescrX = margin + 4;
-  const colQtyX = margin + contentWidth * 0.52;
-  const colPriceX = margin + contentWidth * 0.65;
-  const colAmountX = pageWidth - margin - 4;
+  const drawHairline = (y) => {
+    stroke(T.line);
+    pdf.setLineWidth(0.15);
+    pdf.line(margin, y, pageWidth - margin, y);
+  };
 
-  pdf.text('DESCRIPTION', colDescrX, tableY);
-  pdf.text('QTY', colQtyX, tableY);
-  pdf.text('PRICE', colPriceX, tableY);
-  pdf.text('AMOUNT', colAmountX, tableY, { align: 'right' });
+  drawTableHeader(itemsTop, itemHeaders);
 
-  // Table rows
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(17, 24, 39);
-  let rowY = tableY + 7;
-
+  let rowY = itemsTop + headerH;
   data.items.forEach((item, i) => {
-    if (rowY > pageHeight - 60) {
+    if (rowY + rowH > footerTop) {
       pdf.addPage();
-      rowY = margin + 10;
+      paintPage();
+      rowY = margin + 6;
+      drawTableHeader(rowY, itemHeaders);
+      rowY += headerH;
     }
-
-    if (i % 2 === 0) {
-      pdf.setFillColor(249, 250, 251);
-      pdf.rect(margin, rowY - 5, contentWidth, 9, 'F');
+    const baseline = rowY + 5.4;
+    if (i % 2 === 1) {
+      fill(T.soft);
+      pdf.rect(margin, rowY, contentWidth, rowH, 'F');
     }
-
-    pdf.text(item.description, colDescrX, rowY);
-    pdf.text(String(item.qty), colQtyX, rowY);
-    pdf.text(fmt(item.price), colPriceX, rowY);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(fmt(item.amount), colAmountX, rowY, { align: 'right' });
-    pdf.setFont('helvetica', 'normal');
-
-    rowY += 9;
+    put(fit(item.description, descW, 'normal'), descX, baseline, undefined, { size: 9.5, color: T.ink });
+    put(String(item.qty), qtyR, baseline, { align: 'right' }, { size: 9.5, color: T.body });
+    put(fmt(item.price), priceR, baseline, { align: 'right' }, { size: 9.5, color: T.body });
+    put(fmt(item.amount), amountR, baseline, { align: 'right' }, { weight: 'bold', size: 9.5, color: T.ink });
+    rowY += rowH;
+    drawHairline(rowY);
   });
+  // ===== TOTALS BOX =====
+  const rowStep = 5.6;
+  const bandH = 12;
+  const boxW2 = 92;
+  const boxX = pageWidth - margin - boxW2;
+  const labelX = boxX + 5;
+  const valueR = boxX + boxW2 - 5;
+  const labelW = valueR - 34 - labelX;
 
-  // ===== TOTALS =====
-  const totalsTop = rowY + 10;
-  const totalsX = pageWidth - margin - 95;
-  const totalsWidth = 95;
-  const nCharges = data.charges.length;
-  const totalsHeight = 44 + 6 * nCharges;
+  const nRows = 1 + data.charges.length; // subtotal + each charge
+  const firstRowOff = 8;
+  const lastRowOff = firstRowOff + (nRows - 1) * rowStep;
+  const bandOff = lastRowOff + 2;
+  const advOff = bandOff + bandH + 6;
+  const dueOff = advOff + 7;
+  const boxH2 = dueOff + 4;
 
-  pdf.setFillColor(249, 250, 251);
-  pdf.setDrawColor(229, 231, 235);
-  pdf.setLineWidth(0.5);
-  pdf.roundedRect(totalsX, totalsTop, totalsWidth, totalsHeight, 3, 3, 'FD');
+  let totalsTop = rowY + 9;
+  if (totalsTop + boxH2 > footerTop) {
+    pdf.addPage();
+    paintPage();
+    totalsTop = margin + 6;
+  }
 
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9.5);
-  let tY = totalsTop + 8;
+  fill(T.soft);
+  stroke(T.line);
+  pdf.setLineWidth(0.3);
+  pdf.roundedRect(boxX, totalsTop, boxW2, boxH2, 2.5, 2.5, 'FD');
 
-  // Subtotal
-  pdf.setTextColor(107, 114, 128);
-  pdf.text('Subtotal', totalsX + 5, tY);
-  pdf.setTextColor(17, 24, 39);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text(fmt(data.subtotal), totalsX + totalsWidth - 5, tY, { align: 'right' });
-  tY += 6;
-  pdf.setFont('helvetica', 'normal');
+  // Subtotal + charge rows
+  let tY = totalsTop + firstRowOff;
+  put('Subtotal', labelX, tY, undefined, { size: 9.5, color: T.muted });
+  put(fmt(data.subtotal), valueR, tY, { align: 'right' }, { weight: 'bold', size: 9.5, color: T.ink });
 
-  // Charges
   data.charges.forEach((c) => {
-    pdf.setTextColor(107, 114, 128);
+    tY += rowStep;
     const label = `${c.label}${c.basis === 'percent' ? ` (${trimNumber(c.value)}%)` : ''}`;
-    pdf.text(label, totalsX + 5, tY);
-    pdf.setFont('helvetica', 'bold');
-    if (c.mode === 'deduct') pdf.setTextColor(220, 38, 38);
-    else pdf.setTextColor(17, 24, 39);
-    pdf.text(`${c.mode === 'deduct' ? '-' : '+'}${fmt(Math.abs(c.amount))}`, totalsX + totalsWidth - 5, tY, { align: 'right' });
-    tY += 6;
-    pdf.setFont('helvetica', 'normal');
+    put(fit(label, labelW, 'normal'), labelX, tY, undefined, { size: 9.5, color: T.muted });
+    put(`${c.mode === 'deduct' ? '-' : '+'}${fmt(Math.abs(c.amount))}`, valueR, tY, { align: 'right' },
+      { weight: 'bold', size: 9.5, color: c.mode === 'deduct' ? T.danger : T.ink });
   });
 
-  // ===== GRAND TOTAL =====
-  pdf.setFillColor(79, 70, 229);
-  pdf.roundedRect(totalsX, tY + 2, totalsWidth, 12, 3, 3, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text('TOTAL INVOICE', totalsX + 5, tY + 10);
-  pdf.setFontSize(11);
-  pdf.text(fmt(data.total), totalsX + totalsWidth - 5, tY + 10, { align: 'right' });
-  tY += 20;
+  // Total invoice band
+  const bandTop = totalsTop + bandOff;
+  fill(T.accent);
+  pdf.rect(boxX, bandTop, boxW2, bandH, 'F');
+  put('TOTAL INVOICE AMOUNT', labelX, bandTop + 7.6, undefined, { weight: 'bold', size: 9.5, color: T.white });
+  put(fmt(data.total), valueR, bandTop + 7.6, { align: 'right' }, { weight: 'bold', size: 12, color: T.white });
 
-  // Advance + Due
-  pdf.setFontSize(9.5);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setTextColor(107, 114, 128);
-  pdf.text('Advance Paid', totalsX + 5, tY);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(data.advance > 0 ? 220 : 107, data.advance > 0 ? 38 : 114, data.advance > 0 ? 38 : 128);
-  pdf.text(data.advance > 0 ? `-${fmt(data.advance)}` : fmt(0), totalsX + totalsWidth - 5, tY, { align: 'right' });
-  tY += 6;
-  pdf.setTextColor(17, 24, 39);
-  pdf.text('DUE AMOUNT', totalsX + 5, tY);
-  pdf.text(fmt(data.due), totalsX + totalsWidth - 5, tY, { align: 'right' });
+  // Advance paid
+  tY = bandTop + bandH + 6;
+  put('Advance Paid', labelX, tY, undefined, { size: 9.5, color: T.muted });
+  if (data.advance > 0) {
+    put(`-${fmt(data.advance)}`, valueR, tY, { align: 'right' }, { weight: 'bold', size: 9.5, color: T.danger });
+  } else {
+    put(fmt(0), valueR, tY, { align: 'right' }, { weight: 'bold', size: 9.5, color: T.muted });
+  }
 
+  // Due amount, emphasised behind a divider
+  stroke(T.line);
+  pdf.setLineWidth(0.25);
+  pdf.line(labelX, tY + 2.8, valueR, tY + 2.8);
+  tY += 7;
+  put('DUE AMOUNT', labelX, tY, undefined, { weight: 'bold', size: 10, color: T.ink });
+  put(fmt(data.due), valueR, tY, { align: 'right' }, { weight: 'bold', size: 11.5, color: T.ink });
   // ===== PAYMENT SCHEDULE =====
   if (data.installments.length > 0) {
-    let sY = totalsTop + totalsHeight + 10;
-    const needed = 16 + data.installments.length * 7;
-    if (sY + needed > pageHeight - 30) {
+    const sHeaderH = 8;
+    const sRowH = 7.5;
+    const schedAmountR = pageWidth - margin - 4;
+    const schedDateX = margin + 72;
+    const schedNumR = margin + 7;
+    const schedDescX = margin + 12;
+    const schedDescW = schedDateX - 6 - schedDescX;
+    const schedHeaders = [
+      ['#', schedNumR, 'right'],
+      ['DESCRIPTION', schedDescX, 'left'],
+      ['SERVICE DATE', schedDateX, 'left'],
+      ['AMOUNT', schedAmountR, 'right'],
+    ];
+
+    const drawSchedHeader = (top) => {
+      fill(T.accent);
+      pdf.rect(margin, top, contentWidth, sHeaderH, 'F');
+      schedHeaders.forEach(([text, x, align]) =>
+        put(text, x, top + 5.3, { align }, { weight: 'bold', size: 8, color: T.white }));
+    };
+
+    let sTop = totalsTop + boxH2 + 10;
+    const needed = 25 + sHeaderH + data.installments.length * sRowH + 7;
+    if (sTop + needed > footerTop) {
       pdf.addPage();
-      sY = margin + 10;
+      paintPage();
+      sTop = margin + 6;
     }
 
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(9);
-    pdf.setTextColor(79, 70, 229);
-    pdf.text('PAYMENT SCHEDULE', margin, sY);
-    sY += 6;
+    put('PAYMENT SCHEDULE', margin, sTop + 4, undefined, { weight: 'bold', size: 9.5, color: T.accent });
+    stroke(T.accent);
+    pdf.setLineWidth(0.8);
+    pdf.line(margin, sTop + 6.5, margin + 14, sTop + 6.5);
 
-    // Schedule table header
-    pdf.setFillColor(79, 70, 229);
-    pdf.rect(margin, sY - 5, contentWidth, 8, 'F');
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(255, 255, 255);
-    pdf.text('#', margin + 4, sY);
-    pdf.text('SERVICE DATE', margin + 14, sY);
-    pdf.text('AMOUNT', pageWidth - margin - 4, sY, { align: 'right' });
-    sY += 7;
+    let sRowY = sTop + 10;
+    drawSchedHeader(sRowY);
+    sRowY += sHeaderH;
 
-    // Schedule rows
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
     data.installments.forEach((ins, i) => {
-      if (i % 2 === 0) {
-        pdf.setFillColor(249, 250, 251);
-        pdf.rect(margin, sY - 5, contentWidth, 8, 'F');
+      if (sRowY + sRowH > footerTop) {
+        pdf.addPage();
+        paintPage();
+        sRowY = margin + 6;
+        drawSchedHeader(sRowY);
+        sRowY += sHeaderH;
       }
-      pdf.setTextColor(107, 114, 128);
-      pdf.text(String(i + 1), margin + 4, sY);
-      pdf.setTextColor(17, 24, 39);
-      pdf.text(ins.date ? formatDate(ins.date) : '-', margin + 14, sY);
-      pdf.setFont('helvetica', 'bold');
-      pdf.text(fmt(ins.amount), pageWidth - margin - 4, sY, { align: 'right' });
-      pdf.setFont('helvetica', 'normal');
-      sY += 7;
+      const baseline = sRowY + 5.1;
+      if (i % 2 === 1) {
+        fill(T.soft);
+        pdf.rect(margin, sRowY, contentWidth, sRowH, 'F');
+      }
+      put(String(i + 1), schedNumR, baseline, { align: 'right' }, { size: 9, color: T.muted });
+      put(fit(ins.description || '-', schedDescW, 'normal'), schedDescX, baseline, undefined, { size: 9.5, color: T.ink });
+      put(ins.date ? formatDate(ins.date) : '-', schedDateX, baseline, undefined, { size: 9.5, color: T.body });
+      put(fmt(ins.amount), schedAmountR, baseline, { align: 'right' }, { weight: 'bold', size: 9.5, color: T.ink });
+      sRowY += sRowH;
+      drawHairline(sRowY);
     });
 
-    // Schedule summary
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(107, 114, 128);
     const summary =
       `Scheduled ${fmt(data.scheduled)}` +
       (data.remaining === 0
@@ -899,19 +1013,34 @@ function generatePDF(data, logoDataUrl) {
         : data.remaining < 0
           ? ` - over by ${fmt(Math.abs(data.remaining))}`
           : ` - remaining ${fmt(data.remaining)}`);
-    pdf.text(summary, pageWidth - margin, sY + 1, { align: 'right' });
+    put(summary, pageWidth - margin, sRowY + 5.5, { align: 'right' },
+      { size: 8.5, color: data.remaining === 0 ? T.success : T.danger });
   }
 
-  // ===== FOOTER =====
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8);
-  pdf.setTextColor(107, 114, 128);
-  pdf.text(`© ${data.year} Invoice Generator. All rights reserved.`, pageWidth / 2, pageHeight - 14, { align: 'center' });
-  pdf.setFont('helvetica', 'bold');
-  pdf.setTextColor(79, 70, 229);
-  pdf.text('Powered by Md Ashraf Shahin', pageWidth / 2, pageHeight - 8, { align: 'center' });
+  // ===== FOOTER (on every page) =====
+  const pageCount = pdf.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    pdf.setPage(p);
+    stroke(T.line);
+    pdf.setLineWidth(0.2);
+    pdf.line(margin, pageHeight - 16, pageWidth - margin, pageHeight - 16);
+    put(`© ${data.year} Invoice Generator. All rights reserved.`, margin, pageHeight - 10,
+      undefined, { size: 7.5, color: T.muted });
+    if (pageCount > 1) {
+      put(`Page ${p} of ${pageCount}`, pageWidth / 2, pageHeight - 10, { align: 'center' },
+        { size: 7.5, color: T.muted });
+    }
+    put('Powered by Md Ashraf Shahin', pageWidth - margin, pageHeight - 10, { align: 'right' },
+      { weight: 'bold', size: 7.5, color: T.accent });
+  }
 
-  // Save
+  pdf.setProperties({
+    title: `Invoice ${data.invoiceNumber}`,
+    subject: 'Invoice',
+    author: 'Invoice Generator',
+    creator: 'Invoice Generator',
+  });
+
   pdf.save(`${data.invoiceNumber}.pdf`);
 }
 
@@ -976,6 +1105,7 @@ function buildPreviewHtml(data) {
   const installmentRows = data.installments.map((ins, i) => `
     <tr${i % 2 === 0 ? ' class="preview-row-alt"' : ''}>
       <td>${i + 1}</td>
+      <td>${escapeHtml(ins.description) || '-'}</td>
       <td>${ins.date ? formatDate(ins.date) : '-'}</td>
       <td class="preview-cell-amount">${format(ins.amount)}</td>
     </tr>
@@ -984,10 +1114,11 @@ function buildPreviewHtml(data) {
   const scheduleHtml = data.installments.length ? `
       <div class="preview-schedule-wrap">
         <h3 class="preview-schedule-title">Payment Schedule</h3>
-        <table class="preview-table">
+        <table class="preview-table preview-schedule-table">
           <thead>
             <tr>
               <th>#</th>
+              <th>Description</th>
               <th>Service Date</th>
               <th>Amount</th>
             </tr>
