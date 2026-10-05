@@ -18,36 +18,52 @@
   --danger: #dc2626;
   --danger-light: #fee2e2;
   --success: #16a34a;
+  --input-bg: #ffffff;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   --header-gradient: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #9333ea 100%);
+  --ground-glow: none;
+  --focus-ring: rgba(79, 70, 229, 0.15);
+  --danger-ring: rgba(220, 38, 38, 0.15);
+  --overlay: rgba(15, 23, 42, 0.5);
 }
 
 [data-theme="dark"] {
-  --bg: #111827;
-  --card-bg: #1f2937;
-  --text: #f9fafb;
-  --text-muted: #9ca3af;
-  --border: #374151;
-  --primary: #6366f1;
-  --primary-hover: #4f46e5;
-  --primary-light: #312e81;
-  --secondary: #374151;
-  --secondary-hover: #4b5563;
+  color-scheme: dark;
+  --bg: #07080d;
+  --card-bg: #161922;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --border: #2a2e3a;
+  --primary: #818cf8;
+  --primary-hover: #6366f1;
+  --primary-light: #1e1b4b;
+  --secondary: #222633;
+  --secondary-hover: #2c3142;
   --danger: #f87171;
-  --danger-light: #7f1d1d;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
-  --header-gradient: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
+  --danger-light: #3f1d1d;
+  --input-bg: #0c0e14;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 6px 16px -4px rgba(0, 0, 0, 0.4);
+  --header-gradient: linear-gradient(135deg, #1e1b4b 0%, #312e81 55%, #4c1d95 100%);
+  --ground-glow:
+    radial-gradient(ellipse 80% 50% at 15% -10%, rgba(99, 102, 241, 0.22), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(124, 58, 237, 0.16), transparent 50%),
+    radial-gradient(ellipse 50% 30% at 50% 110%, rgba(49, 46, 129, 0.28), transparent 60%);
+  --focus-ring: rgba(129, 140, 248, 0.28);
+  --danger-ring: rgba(248, 113, 113, 0.28);
+  --overlay: rgba(0, 0, 0, 0.72);
 }
 
 body {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: var(--ground-glow);
+  background-attachment: fixed;
   color: var(--text);
   line-height: 1.6;
   min-height: 100vh;
-  transition: background 0.3s, color 0.3s;
+  transition: background-color 0.3s, color 0.3s;
 }
 
 .container {
@@ -165,7 +181,7 @@ body {
   padding: 0.625rem 0.75rem;
   border: 1.5px solid var(--border);
   border-radius: 0.5rem;
-  background: var(--card-bg);
+  background: var(--input-bg);
   color: var(--text);
   font-size: 0.9375rem;
   font-family: inherit;
@@ -178,7 +194,7 @@ body {
 .form-group textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .form-group input.invalid,
@@ -190,7 +206,7 @@ body {
 .form-group input.invalid:focus,
 .form-group select.invalid:focus,
 .form-group textarea.invalid:focus {
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+  box-shadow: 0 0 0 3px var(--danger-ring);
 }
 
 .form-group textarea {
@@ -248,7 +264,7 @@ td input {
   padding: 0.5rem 0.625rem;
   border: 1.5px solid var(--border);
   border-radius: 0.375rem;
-  background: var(--card-bg);
+  background: var(--input-bg);
   color: var(--text);
   font-size: 0.9375rem;
   font-family: inherit;
@@ -258,7 +274,7 @@ td input {
 td input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 td input.input-invalid {
@@ -425,7 +441,7 @@ td input.input-invalid {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -436,6 +452,7 @@ td input.input-invalid {
 
 .modal {
   background: var(--card-bg);
+  border: 1px solid var(--border);
   border-radius: 1rem;
   width: 100%;
   max-width: 800px;
@@ -623,7 +640,7 @@ td input.input-invalid {
 
 .preview-totals {
   width: 100%;
-  max-width: 280px;
+  max-width: 320px;
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 0.75rem;
@@ -647,10 +664,26 @@ td input.input-invalid {
 
 .preview-grand {
   background: #4f46e5;
-  margin: 0.75rem -1.25rem -1rem;
+  margin: 0.75rem -1.25rem 0;
   padding: 1rem 1.25rem;
-  border-radius: 0 0 0.75rem 0.75rem;
   align-items: center;
+}
+
+.preview-grand:last-child {
+  margin-bottom: -1rem;
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+
+.preview-due {
+  border-top: 1px dashed #e5e7eb;
+  margin-top: 0.35rem;
+  padding-top: 0.55rem;
+}
+
+.preview-due span,
+.preview-due span:last-child {
+  font-weight: 800;
+  color: #111827;
 }
 
 .preview-grand span,
@@ -677,6 +710,25 @@ td input.input-invalid {
 .preview-footer strong {
   color: #4f46e5;
   font-weight: 700;
+}
+
+.preview-schedule-wrap {
+  margin-bottom: 1.5rem;
+}
+
+.preview-schedule-title {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 0.6rem;
+}
+
+.preview-schedule-note {
+  margin: 0.5rem 0 0;
+  text-align: right;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #6b7280;
 }
 
 @keyframes fadeIn {
@@ -890,6 +942,180 @@ td input.input-invalid {
 .print-footer strong {
   color: #4f46e5;
   font-weight: 700;
+}
+
+/* Charges & Adjustments */
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.inline-select {
+  padding: 0.625rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.inline-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+td select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1.5px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+td select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.col-charge-label {
+  width: 26%;
+}
+
+.col-charge-mode {
+  width: 14%;
+}
+
+.col-charge-basis {
+  width: 20%;
+}
+
+.col-charge-value {
+  width: 14%;
+}
+
+.col-charge-amount {
+  width: 16%;
+}
+
+.charge-computed {
+  font-weight: 600;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.charge-computed.is-deduct {
+  color: var(--danger);
+}
+
+.calc-hint {
+  margin-top: 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.calc-hint code {
+  background: var(--secondary);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.78125rem;
+}
+
+/* Payments & Installments */
+.col-installment-no {
+  width: 44px;
+}
+
+.col-installment-date {
+  width: 45%;
+}
+
+.col-installment-amount {
+  width: 35%;
+}
+
+.installment-no {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.split-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.split-count {
+  width: 4.5rem;
+  padding: 0.625rem 0.5rem;
+  border: 1.5px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  text-align: center;
+}
+
+.split-count:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.schedule-status {
+  margin-top: 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.schedule-status.is-ok {
+  color: var(--success);
+}
+
+.schedule-status.is-warn {
+  color: var(--danger);
+}
+
+/* Totals additions */
+.form-group input.input-invalid {
+  border-color: var(--danger);
+}
+
+.total-due-row {
+  margin-top: 0.35rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.total-due-row span:last-child {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.total-muted span:last-child {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.total-row span.amount-negative {
+  color: var(--danger);
 }
 
 /* Responsive */

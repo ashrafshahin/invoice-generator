@@ -8,10 +8,19 @@ const previewBtn = document.getElementById('previewBtn');
 const resetBtn = document.getElementById('resetBtn');
 const themeToggle = document.getElementById('themeToggle');
 const currencySelect = document.getElementById('currency');
-const taxRateInput = document.getElementById('taxRate');
-const discountTypeSelect = document.getElementById('discountType');
-const discountValueInput = document.getElementById('discountValue');
 const companyLogoInput = document.getElementById('companyLogo');
+
+// Charges & payments elements
+const chargesBody = document.getElementById('chargesBody');
+const chargePreset = document.getElementById('chargePreset');
+const addChargeBtn = document.getElementById('addChargeBtn');
+const installmentsBody = document.getElementById('installmentsBody');
+const addInstallmentBtn = document.getElementById('addInstallmentBtn');
+const splitBtn = document.getElementById('splitBtn');
+const splitCount = document.getElementById('splitCount');
+const scheduleStatus = document.getElementById('scheduleStatus');
+const advanceAmountInput = document.getElementById('advanceAmount');
+const advanceDateInput = document.getElementById('advanceDate');
 
 // Modal elements
 const previewModal = document.getElementById('previewModal');
@@ -22,11 +31,15 @@ const previewDownloadBtn = document.getElementById('previewDownloadBtn');
 
 // Totals elements
 const subtotalEl = document.getElementById('subtotal');
-const taxEl = document.getElementById('tax');
 const totalEl = document.getElementById('total');
-const discountRow = document.getElementById('discountRow');
-const discountAmountEl = document.getElementById('discountAmount');
-const taxRateLabel = document.getElementById('taxRateLabel');
+const chargeTotalsRows = document.getElementById('chargeTotalsRows');
+const advancePaidEl = document.getElementById('advancePaid');
+const dueAmountEl = document.getElementById('dueAmount');
+const installmentSummaryRow = document.getElementById('installmentSummaryRow');
+const installmentCountEl = document.getElementById('installmentCount');
+const installmentScheduledEl = document.getElementById('installmentScheduled');
+const installmentRemainingRow = document.getElementById('installmentRemainingRow');
+const installmentRemainingEl = document.getElementById('installmentRemaining');
 
 // Currency symbols
 const CURRENCY_SYMBOLS = {
@@ -63,6 +76,139 @@ function formatNumber(amount) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+// Trim a number to at most 2 decimals without thousands separators
+function trimNumber(n) {
+  return String(Math.round(n * 100) / 100);
+}
+
+// ===== Math expression evaluator =====
+// Supports: + - * / ( ) % with calculator-style percentages (2000-10% = 1800).
+// Safe alternative to eval() — only numbers and known operators are allowed.
+function evaluateMath(expr) {
+  const src = String(expr).replace(/,/g, '').replace(/×/g, '*').replace(/÷/g, '/');
+  const tokens = [];
+  let i = 0;
+
+  while (i < src.length) {
+    const ch = src[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    if (/[0-9.]/.test(ch)) {
+      let num = '';
+      while (i < src.length && /[0-9.]/.test(src[i])) num += src[i++];
+      if ((num.match(/\./g) || []).length > 1 || num === '.') return { ok: false };
+      tokens.push({ t: 'num', v: parseFloat(num) });
+      continue;
+    }
+    if ('+-*/%()'.includes(ch)) {
+      tokens.push({ t: ch });
+      i++;
+      continue;
+    }
+    return { ok: false };
+  }
+
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const eat = (t) => { if (tokens[pos] && tokens[pos].t === t) { pos++; return true; } return false; };
+
+  // primary := number | '(' expr ')'
+  function primary() {
+    const tk = peek();
+    if (!tk) return null;
+    if (tk.t === 'num') { pos++; return { v: tk.v, pct: false }; }
+    if (tk.t === '(') {
+      pos++;
+      const e = additive();
+      if (!e || !eat(')')) return null;
+      return e;
+    }
+    return null;
+  }
+
+  // postfix '%' → value/100, flagged as a percentage term
+  function postfix() {
+    const e = primary();
+    if (!e) return null;
+    let node = e;
+    while (peek() && peek().t === '%') {
+      pos++;
+      node = { v: node.v / 100, pct: true };
+    }
+    return node;
+  }
+
+  function unary() {
+    if (peek() && (peek().t === '-' || peek().t === '+')) {
+      const op = peek().t;
+      pos++;
+      const e = unary();
+      if (!e) return null;
+      return { v: op === '-' ? -e.v : e.v, pct: e.pct };
+    }
+    return postfix();
+  }
+
+  function multiplicative() {
+    let left = unary();
+    if (!left) return null;
+    let single = true;
+    while (peek() && (peek().t === '*' || peek().t === '/')) {
+      const op = peek().t;
+      pos++;
+      const right = unary();
+      if (!right) return null;
+      if (op === '/') {
+        if (right.v === 0) return null;
+        left = { v: left.v / right.v, pct: false };
+      } else {
+        left = { v: left.v * right.v, pct: false };
+      }
+      single = false;
+    }
+    return { v: left.v, pct: single && left.pct };
+  }
+
+  function additive() {
+    let left = multiplicative();
+    if (!left) return null;
+    while (peek() && (peek().t === '+' || peek().t === '-')) {
+      const op = peek().t;
+      pos++;
+      const right = multiplicative();
+      if (!right) return null;
+      // Calculator-style: "2000+10%" → 2000 + (2000 × 0.1)
+      const rv = right.pct ? left.v * right.v : right.v;
+      left = { v: op === '+' ? left.v + rv : left.v - rv, pct: false };
+    }
+    return left;
+  }
+
+  const result = additive();
+  if (!result || pos !== tokens.length) return { ok: false };
+  if (!isFinite(result.v)) return { ok: false };
+  return { ok: true, value: result.v };
+}
+
+// Evaluate a math expression typed into a .calc-input field (blur / Enter)
+function evaluateField(el) {
+  const raw = el.value.trim();
+  if (!raw) return;
+  const cleaned = raw.replace(/,/g, '');
+  if (/^-?\d+(\.\d+)?$/.test(cleaned)) {
+    if (cleaned !== raw) el.value = cleaned;
+    return;
+  }
+  const res = evaluateMath(cleaned);
+  if (res.ok) {
+    const rounded = Math.round((res.value + Number.EPSILON) * 100) / 100;
+    el.value = String(rounded);
+    el.classList.remove('input-invalid');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  } else {
+    el.classList.add('input-invalid');
+  }
 }
 
 // Validate email format
@@ -151,24 +297,43 @@ function validateForm() {
     alert('Please add at least one complete line item with description, quantity and price.');
   }
 
-  // Tax rate
-  const taxRate = parseFloat(taxRateInput.value);
-  if (isNaN(taxRate) || taxRate < 0 || taxRate > 100) {
-    taxRateInput.classList.add('invalid');
+  // Charges & adjustments
+  let invalidCharges = 0;
+  document.querySelectorAll('#chargesBody tr').forEach((tr) => {
+    const val = tr.querySelector('.charge-value');
+    const v = parseFloat(val.value);
+    const ok = !isNaN(v) && v >= 0;
+    val.classList.toggle('input-invalid', !ok);
+    if (!ok) invalidCharges++;
+  });
+  if (invalidCharges > 0) {
     isValid = false;
-  } else {
-    taxRateInput.classList.remove('invalid');
+    alert('Charge values must be 0 or greater. Use the Type and Basis columns to add or deduct.');
   }
 
-  // Discount value
-  if (discountTypeSelect.value !== 'none') {
-    const discountVal = parseFloat(discountValueInput.value);
-    if (isNaN(discountVal) || discountVal < 0) {
-      discountValueInput.classList.add('invalid');
-      isValid = false;
-    } else {
-      discountValueInput.classList.remove('invalid');
-    }
+  // Advance payment
+  const advanceVal = parseFloat(advanceAmountInput.value);
+  const advanceOk = !isNaN(advanceVal) && advanceVal >= 0;
+  advanceAmountInput.classList.toggle('input-invalid', !advanceOk);
+  document.getElementById('advanceAmountError').textContent =
+    advanceOk ? '' : 'Advance payment must be 0 or greater';
+  if (!advanceOk) isValid = false;
+
+  // Installments
+  let invalidInstallments = 0;
+  document.querySelectorAll('#installmentsBody tr').forEach((tr) => {
+    const amt = tr.querySelector('.installment-amount');
+    const date = tr.querySelector('.installment-date');
+    const a = parseFloat(amt.value);
+    const amtOk = !isNaN(a) && a >= 0;
+    const dateOk = a === 0 || date.value !== '';
+    amt.classList.toggle('input-invalid', !amtOk);
+    date.classList.toggle('input-invalid', !dateOk);
+    if (!amtOk || !dateOk) invalidInstallments++;
+  });
+  if (invalidInstallments > 0) {
+    isValid = false;
+    alert('Installment amounts must be 0 or greater, and service dates are required for non-zero amounts.');
   }
 
   return isValid;
@@ -183,10 +348,10 @@ function addLineItem(description = '', qty = 1, price = 0) {
       <input type="text" class="item-description" placeholder="Item description" value="${description}" />
     </td>
     <td>
-      <input type="number" class="item-qty" min="0" step="1" value="${qty}" />
+      <input type="text" inputmode="decimal" class="item-qty calc-input" value="${qty}" placeholder="Qty" />
     </td>
     <td>
-      <input type="number" class="item-price" min="0" step="0.01" value="${price}" />
+      <input type="text" inputmode="decimal" class="item-price calc-input" value="${price}" placeholder="0.00" />
     </td>
     <td class="amount-cell">${formatCurrency(0)}</td>
     <td>
@@ -230,46 +395,113 @@ function updateRowAmount(tr) {
   updateTotals();
 }
 
-// Calculate and update all totals
-function updateTotals() {
-  let subtotal = 0;
+// ===== Charges & payments: row builders =====
 
-  document.querySelectorAll('#itemsBody tr').forEach((tr) => {
-    const qty = parseFloat(tr.querySelector('.item-qty').value) || 0;
-    const price = parseFloat(tr.querySelector('.item-price').value) || 0;
-    subtotal += qty * price;
+// Add a charge/adjustment row (e.g. VAT %, Service Charge, Honorarium)
+function addCharge(label = 'Custom Charge', mode = 'add', basis = 'percent', value = 0) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>
+      <input type="text" class="charge-label" value="${escapeHtml(label)}" placeholder="Charge label" />
+    </td>
+    <td>
+      <select class="charge-mode">
+        <option value="add">+ Add</option>
+        <option value="deduct">- Deduct</option>
+      </select>
+    </td>
+    <td>
+      <select class="charge-basis">
+        <option value="percent">% of Subtotal</option>
+        <option value="fixed">Fixed Amount</option>
+      </select>
+    </td>
+    <td>
+      <input type="text" inputmode="decimal" class="charge-value calc-input" value="${value}" />
+    </td>
+    <td class="charge-computed">$0.00</td>
+    <td>
+      <button class="delete-btn" title="Remove charge">&times;</button>
+    </td>
+  `;
+  tr.querySelector('.charge-mode').value = mode;
+  tr.querySelector('.charge-basis').value = basis;
+  tr.querySelector('.delete-btn').addEventListener('click', () => {
+    tr.remove();
+    updateTotals();
   });
+  chargesBody.appendChild(tr);
+  updateTotals();
+}
 
-  const discountType = discountTypeSelect.value;
-  const discountValue = parseFloat(discountValueInput.value) || 0;
-  let discount = 0;
+// Add an installment row with a service date
+function addInstallment(date = '', amount = 0) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="installment-no"></td>
+    <td>
+      <input type="date" class="installment-date" value="${date}" />
+    </td>
+    <td>
+      <input type="text" inputmode="decimal" class="installment-amount calc-input" value="${amount}" />
+    </td>
+    <td>
+      <button class="delete-btn" title="Remove installment">&times;</button>
+    </td>
+  `;
+  tr.querySelector('.delete-btn').addEventListener('click', () => {
+    tr.remove();
+    updateTotals();
+  });
+  installmentsBody.appendChild(tr);
+  updateTotals();
+}
 
-  if (discountType === 'percent') {
-    discount = subtotal * (discountValue / 100);
-  } else if (discountType === 'fixed') {
-    discount = Math.min(discountValue, subtotal);
+// Split the due amount into N even installments between invoice date and due date
+function splitDueEvenly() {
+  const count = parseInt(splitCount.value, 10);
+  if (isNaN(count) || count < 1) {
+    alert('Enter the number of installments (1 or more).');
+    return;
   }
 
-  const taxRate = parseFloat(taxRateInput.value) || 0;
-  const tax = subtotal * (taxRate / 100);
-  const total = subtotal - discount + tax;
+  const t = computeTotals();
+  const due = Math.round(t.due * 100) / 100;
+  if (due <= 0) {
+    alert('Due amount must be greater than 0 before splitting.');
+    return;
+  }
 
-  subtotalEl.textContent = formatCurrency(subtotal);
-  taxEl.textContent = formatCurrency(tax);
-  totalEl.textContent = formatCurrency(total);
-  taxRateLabel.textContent = taxRate;
+  const startStr = document.getElementById('invoiceDate').value;
+  const endStr = document.getElementById('dueDate').value;
+  const start = new Date(startStr + 'T00:00:00');
+  const end = new Date(endStr + 'T00:00:00');
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    alert('Set valid invoice and due dates first.');
+    return;
+  }
 
-  if (discount > 0) {
-    discountRow.style.display = 'flex';
-    discountAmountEl.textContent = `-${formatCurrency(discount)}`;
-  } else {
-    discountRow.style.display = 'none';
+  const fmtDate = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const days = Math.round((end - start) / 86400000);
+  const base = Math.floor((due / count) * 100) / 100;
+
+  installmentsBody.innerHTML = '';
+  let allocated = 0;
+  for (let i = 0; i < count; i++) {
+    const frac = count === 1 ? 1 : i / (count - 1);
+    const d = new Date(start);
+    d.setDate(d.getDate() + Math.round(frac * days));
+    const amount = i === count - 1 ? Math.round((due - allocated) * 100) / 100 : base;
+    allocated = Math.round((allocated + amount) * 100) / 100;
+    addInstallment(fmtDate(d), amount);
   }
 }
 
-// Get invoice data for PDF & preview
-function getInvoiceData() {
-  // Line items
+// ===== Totals calculation =====
+
+// Single source of truth for all invoice math
+function computeTotals() {
   const items = [];
   let subtotal = 0;
 
@@ -282,21 +514,102 @@ function getInvoiceData() {
     items.push({ description, qty, price, amount });
   });
 
-  // Discount
-  const discountType = discountTypeSelect.value;
-  const discountValue = parseFloat(discountValueInput.value) || 0;
-  let discount = 0;
+  const charges = [];
+  let chargeSum = 0;
 
-  if (discountType === 'percent') {
-    discount = subtotal * (discountValue / 100);
-  } else if (discountType === 'fixed') {
-    discount = Math.min(discountValue, subtotal);
+  document.querySelectorAll('#chargesBody tr').forEach((tr) => {
+    const label = tr.querySelector('.charge-label').value.trim() || 'Charge';
+    const mode = tr.querySelector('.charge-mode').value;
+    const basis = tr.querySelector('.charge-basis').value;
+    const value = parseFloat(tr.querySelector('.charge-value').value) || 0;
+    const amount = basis === 'percent' ? subtotal * (value / 100) : value;
+    const signed = mode === 'deduct' ? -amount : amount;
+    chargeSum += signed;
+    charges.push({ label, mode, basis, value, amount: signed });
+  });
+
+  const total = subtotal + chargeSum;
+  const advance = Math.max(0, parseFloat(advanceAmountInput.value) || 0);
+  const due = total - advance;
+
+  const installments = [];
+  let scheduled = 0;
+
+  document.querySelectorAll('#installmentsBody tr').forEach((tr) => {
+    const date = tr.querySelector('.installment-date').value;
+    const amount = Math.max(0, parseFloat(tr.querySelector('.installment-amount').value) || 0);
+    scheduled += amount;
+    installments.push({ date, amount });
+  });
+
+  scheduled = Math.round(scheduled * 100) / 100;
+  const remaining = Math.round((due - scheduled) * 100) / 100;
+
+  return { items, subtotal, charges, chargeSum, total, advance, due, installments, scheduled, remaining };
+}
+
+// Calculate and update all totals
+function updateTotals() {
+  const t = computeTotals();
+
+  subtotalEl.textContent = formatCurrency(t.subtotal);
+
+  // Charge rows in the totals card
+  chargeTotalsRows.innerHTML = t.charges.map((c) => {
+    const suffix = c.basis === 'percent' ? ` (${trimNumber(c.value)}%)` : '';
+    const deduct = c.mode === 'deduct';
+    const cls = deduct ? 'amount-negative' : '';
+    return `<div class="total-row"><span>${escapeHtml(c.label)}${suffix}</span><span class="${cls}">${deduct ? '-' : '+'}${formatCurrency(Math.abs(c.amount))}</span></div>`;
+  }).join('');
+
+  totalEl.textContent = formatCurrency(t.total);
+  advancePaidEl.textContent = t.advance > 0 ? `-${formatCurrency(t.advance)}` : formatCurrency(0);
+  advancePaidEl.classList.toggle('amount-negative', t.advance > 0);
+  dueAmountEl.textContent = formatCurrency(t.due);
+
+  // Live computed amounts inside the charges table
+  document.querySelectorAll('#chargesBody tr').forEach((tr, i) => {
+    const c = t.charges[i];
+    if (!c) return;
+    const cell = tr.querySelector('.charge-computed');
+    const deduct = c.mode === 'deduct';
+    cell.textContent = `${deduct ? '-' : '+'}${formatCurrency(Math.abs(c.amount))}`;
+    cell.classList.toggle('is-deduct', deduct);
+  });
+
+  // Installment summary rows + status line
+  const count = t.installments.length;
+  if (count > 0) {
+    installmentSummaryRow.style.display = 'flex';
+    installmentCountEl.textContent = count;
+    installmentScheduledEl.textContent = formatCurrency(t.scheduled);
+    installmentRemainingRow.style.display = 'flex';
+    installmentRemainingEl.textContent =
+      t.remaining < 0 ? `-${formatCurrency(Math.abs(t.remaining))}` : formatCurrency(t.remaining);
+    installmentRemainingEl.classList.toggle('amount-negative', t.remaining !== 0);
+    scheduleStatus.textContent = t.remaining < 0
+      ? `Schedule exceeds due amount by ${formatCurrency(Math.abs(t.remaining))}.`
+      : t.remaining === 0
+        ? `Schedule covers the full due amount (${formatCurrency(t.due)}).`
+        : `Scheduled ${formatCurrency(t.scheduled)} of ${formatCurrency(t.due)} due — remaining ${formatCurrency(t.remaining)}.`;
+    scheduleStatus.classList.toggle('is-warn', t.remaining !== 0);
+    scheduleStatus.classList.toggle('is-ok', t.remaining === 0);
+  } else {
+    installmentSummaryRow.style.display = 'none';
+    installmentRemainingRow.style.display = 'none';
+    scheduleStatus.textContent = '';
+    scheduleStatus.classList.remove('is-warn', 'is-ok');
   }
 
-  // Tax
-  const taxRate = parseFloat(taxRateInput.value) || 0;
-  const tax = subtotal * (taxRate / 100);
-  const total = subtotal - discount + tax;
+  // Renumber installment rows
+  document.querySelectorAll('#installmentsBody .installment-no').forEach((el, i) => {
+    el.textContent = i + 1;
+  });
+}
+
+// Get invoice data for PDF & preview
+function getInvoiceData() {
+  const t = computeTotals();
 
   return {
     invoiceNumber: document.getElementById('invoiceNumber').value.trim() || 'INV-001',
@@ -310,12 +623,16 @@ function getInvoiceData() {
     clientEmail: document.getElementById('clientEmail').value.trim(),
     clientPhone: document.getElementById('clientPhone').value.trim(),
     clientAddress: document.getElementById('clientAddress').value.trim(),
-    items,
-    subtotal,
-    discount,
-    taxRate,
-    tax,
-    total,
+    items: t.items,
+    subtotal: t.subtotal,
+    charges: t.charges,
+    total: t.total,
+    advance: t.advance,
+    advanceDate: advanceDateInput.value,
+    due: t.due,
+    installments: t.installments,
+    scheduled: t.scheduled,
+    remaining: t.remaining,
     year: new Date().getFullYear(),
   };
 }
@@ -471,7 +788,8 @@ function generatePDF(data, logoDataUrl) {
   const totalsTop = rowY + 10;
   const totalsX = pageWidth - margin - 95;
   const totalsWidth = 95;
-  const totalsHeight = data.discount > 0 ? 50 : 38;
+  const nCharges = data.charges.length;
+  const totalsHeight = 44 + 6 * nCharges;
 
   pdf.setFillColor(249, 250, 251);
   pdf.setDrawColor(229, 231, 235);
@@ -491,25 +809,18 @@ function generatePDF(data, logoDataUrl) {
   tY += 6;
   pdf.setFont('helvetica', 'normal');
 
-  // Discount
-  if (data.discount > 0) {
+  // Charges
+  data.charges.forEach((c) => {
     pdf.setTextColor(107, 114, 128);
-    pdf.text('Discount', totalsX + 5, tY);
-    pdf.setTextColor(220, 38, 38);
+    const label = `${c.label}${c.basis === 'percent' ? ` (${trimNumber(c.value)}%)` : ''}`;
+    pdf.text(label, totalsX + 5, tY);
     pdf.setFont('helvetica', 'bold');
-    pdf.text(`-${fmt(data.discount)}`, totalsX + totalsWidth - 5, tY, { align: 'right' });
+    if (c.mode === 'deduct') pdf.setTextColor(220, 38, 38);
+    else pdf.setTextColor(17, 24, 39);
+    pdf.text(`${c.mode === 'deduct' ? '-' : '+'}${fmt(Math.abs(c.amount))}`, totalsX + totalsWidth - 5, tY, { align: 'right' });
     tY += 6;
     pdf.setFont('helvetica', 'normal');
-  }
-
-  // Tax
-  pdf.setTextColor(107, 114, 128);
-  pdf.text(`Tax (${data.taxRate}%)`, totalsX + 5, tY);
-  pdf.setTextColor(17, 24, 39);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text(fmt(data.tax), totalsX + totalsWidth - 5, tY, { align: 'right' });
-  tY += 6;
-  pdf.setFont('helvetica', 'normal');
+  });
 
   // ===== GRAND TOTAL =====
   pdf.setFillColor(79, 70, 229);
@@ -517,9 +828,79 @@ function generatePDF(data, logoDataUrl) {
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9);
   pdf.setTextColor(255, 255, 255);
-  pdf.text('TOTAL DUE', totalsX + 5, tY + 10);
+  pdf.text('TOTAL INVOICE', totalsX + 5, tY + 10);
   pdf.setFontSize(11);
   pdf.text(fmt(data.total), totalsX + totalsWidth - 5, tY + 10, { align: 'right' });
+  tY += 20;
+
+  // Advance + Due
+  pdf.setFontSize(9.5);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setTextColor(107, 114, 128);
+  pdf.text('Advance Paid', totalsX + 5, tY);
+  pdf.setFont('helvetica', 'bold');
+  pdf.setTextColor(data.advance > 0 ? 220 : 107, data.advance > 0 ? 38 : 114, data.advance > 0 ? 38 : 128);
+  pdf.text(data.advance > 0 ? `-${fmt(data.advance)}` : fmt(0), totalsX + totalsWidth - 5, tY, { align: 'right' });
+  tY += 6;
+  pdf.setTextColor(17, 24, 39);
+  pdf.text('DUE AMOUNT', totalsX + 5, tY);
+  pdf.text(fmt(data.due), totalsX + totalsWidth - 5, tY, { align: 'right' });
+
+  // ===== PAYMENT SCHEDULE =====
+  if (data.installments.length > 0) {
+    let sY = totalsTop + totalsHeight + 10;
+    const needed = 16 + data.installments.length * 7;
+    if (sY + needed > pageHeight - 30) {
+      pdf.addPage();
+      sY = margin + 10;
+    }
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.setTextColor(79, 70, 229);
+    pdf.text('PAYMENT SCHEDULE', margin, sY);
+    sY += 6;
+
+    // Schedule table header
+    pdf.setFillColor(79, 70, 229);
+    pdf.rect(margin, sY - 5, contentWidth, 8, 'F');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(255, 255, 255);
+    pdf.text('#', margin + 4, sY);
+    pdf.text('SERVICE DATE', margin + 14, sY);
+    pdf.text('AMOUNT', pageWidth - margin - 4, sY, { align: 'right' });
+    sY += 7;
+
+    // Schedule rows
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    data.installments.forEach((ins, i) => {
+      if (i % 2 === 0) {
+        pdf.setFillColor(249, 250, 251);
+        pdf.rect(margin, sY - 5, contentWidth, 8, 'F');
+      }
+      pdf.setTextColor(107, 114, 128);
+      pdf.text(String(i + 1), margin + 4, sY);
+      pdf.setTextColor(17, 24, 39);
+      pdf.text(ins.date ? formatDate(ins.date) : '-', margin + 14, sY);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(fmt(ins.amount), pageWidth - margin - 4, sY, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      sY += 7;
+    });
+
+    // Schedule summary
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(107, 114, 128);
+    const summary =
+      `Scheduled ${fmt(data.scheduled)}` +
+      (data.remaining === 0
+        ? ' - fully scheduled'
+        : data.remaining < 0
+          ? ` - over by ${fmt(Math.abs(data.remaining))}`
+          : ` - remaining ${fmt(data.remaining)}`);
+    pdf.text(summary, pageWidth - margin, sY + 1, { align: 'right' });
+  }
 
   // ===== FOOTER =====
   pdf.setFont('helvetica', 'normal');
@@ -586,6 +967,42 @@ function buildPreviewHtml(data) {
     </tr>
   `).join('');
 
+  const chargeRows = data.charges.map((c) => {
+    const suffix = c.basis === 'percent' ? ` (${trimNumber(c.value)}%)` : '';
+    const deduct = c.mode === 'deduct';
+    return `<p><span>${escapeHtml(c.label)}${suffix}</span><span${deduct ? ' style="color:#dc2626;"' : ''}>${deduct ? '-' : '+'}${format(Math.abs(c.amount))}</span></p>`;
+  }).join('');
+
+  const installmentRows = data.installments.map((ins, i) => `
+    <tr${i % 2 === 0 ? ' class="preview-row-alt"' : ''}>
+      <td>${i + 1}</td>
+      <td>${ins.date ? formatDate(ins.date) : '-'}</td>
+      <td class="preview-cell-amount">${format(ins.amount)}</td>
+    </tr>
+  `).join('');
+
+  const scheduleHtml = data.installments.length ? `
+      <div class="preview-schedule-wrap">
+        <h3 class="preview-schedule-title">Payment Schedule</h3>
+        <table class="preview-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Service Date</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>${installmentRows}</tbody>
+        </table>
+        <p class="preview-schedule-note">Scheduled ${format(data.scheduled)}${
+          data.remaining === 0
+            ? ' — fully scheduled'
+            : data.remaining < 0
+              ? ` — over by ${format(Math.abs(data.remaining))}`
+              : ` — remaining ${format(data.remaining)}`
+        }</p>
+      </div>` : '';
+
   const logoHtml = logoDataUrl ? `<img src="${logoDataUrl}" alt="Logo" class="preview-logo" />` : '';
 
   return `
@@ -633,11 +1050,13 @@ function buildPreviewHtml(data) {
       <div class="preview-totals-wrap">
         <div class="preview-totals">
           <p><span>Subtotal</span><span>${format(data.subtotal)}</span></p>
-          ${data.discount > 0 ? `<p><span>Discount</span><span style="color:#dc2626;">-${format(data.discount)}</span></p>` : ''}
-          <p><span>Tax (${data.taxRate}%)</span><span>${format(data.tax)}</span></p>
-          <p class="preview-grand"><span>Total Due</span><span>${format(data.total)}</span></p>
+          ${chargeRows}
+          <p class="preview-grand"><span>Total Invoice Amount</span><span>${format(data.total)}</span></p>
+          <p><span>Advance Payment</span>${data.advance > 0 ? `<span style="color:#dc2626;">-${format(data.advance)}</span>` : `<span>${format(0)}</span>`}</p>
+          <p class="preview-due"><span>Due Amount</span><span>${format(data.due)}</span></p>
         </div>
       </div>
+      ${scheduleHtml}
       <div class="preview-footer">
         <p>&copy; ${data.year} Invoice Generator. All rights reserved.</p>
         <p>Powered by <strong>Md Ashraf Shahin</strong></p>
@@ -703,9 +1122,12 @@ function resetForm() {
   document.getElementById('clientPhone').value = '';
   document.getElementById('clientAddress').value = '';
 
-  taxRateInput.value = 10;
-  discountTypeSelect.value = 'none';
-  discountValueInput.value = 0;
+  advanceAmountInput.value = 0;
+  advanceDateInput.value = '';
+  chargesBody.innerHTML = '';
+  addCharge('VAT', 'add', 'percent', 10);
+  installmentsBody.innerHTML = '';
+  splitCount.value = 3;
 
   document.querySelectorAll('.error-msg').forEach((el) => (el.textContent = ''));
   document.querySelectorAll('.invalid').forEach((el) => el.classList.remove('invalid'));
@@ -781,9 +1203,48 @@ currencySelect.addEventListener('change', (e) => {
   updateTotals();
 });
 
-taxRateInput.addEventListener('input', updateTotals);
-discountTypeSelect.addEventListener('change', updateTotals);
-discountValueInput.addEventListener('input', updateTotals);
+// Math expression inputs (delegated so dynamically added rows are covered)
+document.addEventListener('focusout', (e) => {
+  if (e.target.classList && e.target.classList.contains('calc-input')) evaluateField(e.target);
+}, true);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('calc-input')) {
+    e.preventDefault();
+    evaluateField(e.target);
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.classList) return;
+  if (el.classList.contains('calc-input')) el.classList.remove('input-invalid');
+  if (el.closest('#chargesBody') || el.closest('#installmentsBody') || el.id === 'advanceAmount') {
+    updateTotals();
+  }
+});
+
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.classList && (el.classList.contains('charge-mode') || el.classList.contains('charge-basis'))) {
+    updateTotals();
+  }
+});
+
+addChargeBtn.addEventListener('click', () => {
+  const preset = chargePreset.value;
+  if (preset === 'custom') {
+    addCharge('', 'add', 'percent', 0);
+    chargesBody.lastElementChild.querySelector('.charge-label').focus();
+  } else if (preset === 'Discount') {
+    addCharge(preset, 'deduct', 'percent', 0);
+  } else {
+    addCharge(preset, 'add', 'percent', preset === 'VAT' ? 10 : 0);
+  }
+});
+
+addInstallmentBtn.addEventListener('click', () => addInstallment('', 0));
+splitBtn.addEventListener('click', splitDueEvenly);
 
 // Set current year in footer
 document.getElementById('year').textContent = new Date().getFullYear();
@@ -791,5 +1252,6 @@ document.getElementById('year').textContent = new Date().getFullYear();
 // Initialize the app
 initDates();
 loadTheme();
+addCharge('VAT', 'add', 'percent', 10);
 addLineItem('Web Design Services', 1, 500);
 addLineItem('Hosting (Monthly)', 1, 25);

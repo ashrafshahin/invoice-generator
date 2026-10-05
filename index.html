@@ -138,27 +138,80 @@
         <button id="addItemBtn" class="btn btn-secondary">+ Add Line Item</button>
       </section>
 
-      <!-- Tax & Discount -->
+      <!-- Charges & Adjustments -->
       <section class="card">
-        <h2>Tax & Discount</h2>
+        <h2>Charges &amp; Adjustments</h2>
+        <div class="table-wrapper">
+          <table id="chargesTable">
+            <thead>
+              <tr>
+                <th class="col-charge-label">Label</th>
+                <th class="col-charge-mode">Type</th>
+                <th class="col-charge-basis">Basis</th>
+                <th class="col-charge-value">Value</th>
+                <th class="col-charge-amount">Amount</th>
+                <th class="col-action"></th>
+              </tr>
+            </thead>
+            <tbody id="chargesBody">
+              <!-- Rows added dynamically -->
+            </tbody>
+          </table>
+        </div>
+        <div class="controls-row">
+          <select id="chargePreset" class="inline-select" aria-label="Charge preset">
+            <option value="VAT">VAT</option>
+            <option value="Service Charge">Service Charge</option>
+            <option value="Delay Charge">Delay Charge</option>
+            <option value="Honorarium">Honorarium</option>
+            <option value="Discount">Discount</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <button id="addChargeBtn" class="btn btn-secondary">+ Add Charge</button>
+        </div>
+        <p class="calc-hint">
+          Tip: any value field accepts math — e.g. <code>500*1.2+25</code>, <code>2000-10%</code>,
+          <code>100/3</code>. Press Enter or click away to calculate.
+        </p>
+      </section>
+
+      <!-- Payments & Installments -->
+      <section class="card">
+        <h2>Payments &amp; Installments</h2>
         <div class="form-grid">
           <div class="form-group">
-            <label for="taxRate">Tax Rate (%)</label>
-            <input type="number" id="taxRate" min="0" max="100" step="0.1" value="10" />
+            <label for="advanceAmount">Advance Payment</label>
+            <input type="text" inputmode="decimal" id="advanceAmount" class="calc-input" value="0" placeholder="e.g. 500 or 5000*0.2" />
+            <span class="error-msg" id="advanceAmountError"></span>
           </div>
           <div class="form-group">
-            <label for="discountType">Discount Type</label>
-            <select id="discountType">
-              <option value="none">No Discount</option>
-              <option value="percent">Percentage (%)</option>
-              <option value="fixed">Fixed Amount</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="discountValue">Discount Value</label>
-            <input type="number" id="discountValue" min="0" step="0.01" value="0" />
+            <label for="advanceDate">Advance Paid On</label>
+            <input type="date" id="advanceDate" />
           </div>
         </div>
+        <div class="table-wrapper">
+          <table id="installmentsTable">
+            <thead>
+              <tr>
+                <th class="col-installment-no">#</th>
+                <th class="col-installment-date">Service Date</th>
+                <th class="col-installment-amount">Amount</th>
+                <th class="col-action"></th>
+              </tr>
+            </thead>
+            <tbody id="installmentsBody">
+              <!-- Rows added dynamically -->
+            </tbody>
+          </table>
+        </div>
+        <div class="controls-row">
+          <button id="addInstallmentBtn" class="btn btn-secondary">+ Add Installment</button>
+          <div class="split-controls">
+            <input type="number" id="splitCount" class="split-count" min="1" max="24" step="1" value="3" aria-label="Number of installments" />
+            <button id="splitBtn" class="btn btn-secondary">Split Due Evenly</button>
+          </div>
+        </div>
+        <p class="schedule-status" id="scheduleStatus"></p>
       </section>
 
       <!-- Totals -->
@@ -168,17 +221,28 @@
             <span>Subtotal</span>
             <span id="subtotal">$0.00</span>
           </div>
-          <div class="total-row" id="discountRow" style="display:none;">
-            <span>Discount</span>
-            <span id="discountAmount">-$0.00</span>
-          </div>
-          <div class="total-row">
-            <span>Tax (<span id="taxRateLabel">10</span>%)</span>
-            <span id="tax">$0.00</span>
+          <div id="chargeTotalsRows">
+            <!-- Dynamic charge rows -->
           </div>
           <div class="total-grand">
-            <div class="total-grand-label">Total Amount Due</div>
+            <div class="total-grand-label">Total Invoice Amount</div>
             <div id="total" class="total-grand-value">$0.00</div>
+          </div>
+          <div class="total-row" id="advanceRow">
+            <span>Advance Payment</span>
+            <span id="advancePaid" class="amount-negative">$0.00</span>
+          </div>
+          <div class="total-row total-due-row">
+            <span>Due Amount</span>
+            <span id="dueAmount">$0.00</span>
+          </div>
+          <div class="total-row total-muted" id="installmentSummaryRow" style="display:none;">
+            <span>Installments (<span id="installmentCount">0</span>)</span>
+            <span id="installmentScheduled">$0.00</span>
+          </div>
+          <div class="total-row total-muted" id="installmentRemainingRow" style="display:none;">
+            <span>Remaining after schedule</span>
+            <span id="installmentRemaining">$0.00</span>
           </div>
         </div>
       </section>
